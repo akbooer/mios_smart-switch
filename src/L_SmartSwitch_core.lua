@@ -15,6 +15,10 @@
 -- You should have received a copy of the GNU General Public License
 -- along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+  -- 2021.02.26  @akbooer (for @DesT)
+  -- optionally use device NAMES to override IDS
+
+
 g_pluginName = "SmartSwitch"
 
 -- IMPORT GLOBALS
@@ -29,7 +33,7 @@ local json = require("dkjson")
 -- CONSTANTS
 
 -- Plug-in version
-local PLUGIN_VERSION = "2.0"
+local PLUGIN_VERSION = "2.0.1"      -- 2021.02.26  @akbooer
 local LOG_PREFIX = "SmartSwitch"
 local DATE_FORMAT = "%m/%d/%y %H:%M:%S"
 
@@ -699,6 +703,8 @@ end
 --- init Luup variables if they don't have values
 local function initLuupVariables()
   util.initVariableIfNotSet(SID.SMART_SWITCH, "SwitchIds", "[]", g_deviceId)
+  util.initVariableIfNotSet(SID.SMART_SWITCH, "SwitchNames", "[]", g_deviceId)      -- 2021.2.36  @akbooer
+  util.initVariableIfNotSet(SID.SMART_SWITCH, "UseSwitchNames", "0", g_deviceId)    -- 2021.2.36  @akbooer
 end
 
 local function getDefaultParameters()
@@ -775,6 +781,26 @@ end
 
 -- Synchronize the Smart Switch Controller devices
 local function syncChildDevices()
+  
+  -----------------------------------
+  -- 2021.02.26  @akbooer
+  -- optionally use device NAMES to override IDS
+  local use_names = util.getLuupVariable(SID.SMART_SWITCH, "UseSwitchNames", g_deviceId, util.T_BOOLEAN)
+  if use_names then
+    local name2id = {}
+    for n, d in pairs(luup.devices) do    -- make a map of all the device names/ids
+      name2id[d.description] = tostring(n)
+    end
+    local newIds = {}
+    local switchNames = util.getLuupVariable(SID.SMART_SWITCH, "SwitchNames", g_deviceId, util.T_TABLE)
+    for _, name in ipairs(switchNames) do   -- make new list of ids from names
+      newIds[#newIds+1] = name2id[name]
+    end
+    util.setLuupVariable(SID.SMART_SWITCH, "SwitchIds", newIds, g_deviceId)
+  end
+  -- 2021.02.26  @akbooer
+  -----------------------------------
+  
   local switchIds = util.getLuupVariable(SID.SMART_SWITCH, "SwitchIds", g_deviceId, util.T_TABLE)
   log.debugValues ("", "switchIds", switchIds)
 
@@ -803,6 +829,24 @@ local function syncChildDevices()
     log.error ("Found invalid switch id in switch list, old list: ", switchIds, ", new list: ", validSwitchIds)
     util.setLuupVariable(SID.SMART_SWITCH, "SwitchIds", validSwitchIds, g_deviceId)
   end
+  
+  -----------------------------------
+  -- 2021.02.26  @akbooer
+  -- write (possibly new) list of names
+  function updateNamesFromSwitchIds ()
+    local newNames = {}
+    local switchIds = util.getLuupVariable(SID.SMART_SWITCH, "SwitchIds", g_deviceId, util.T_TABLE)
+    for i, idstr in ipairs (switchIds) do
+      newNames[i] = (luup.devices[tonumber(idstr)] or {}) .description or '?'
+    end
+    util.setLuupVariable(SID.SMART_SWITCH, "SwitchNames", newNames, g_deviceId)
+  end
+  
+  updateNamesFromSwitchIds ()
+  luup.variable_watch ("updateNamesFromSwitchIds", SID.SMART_SWITCH, "SwitchIds", g_deviceId)  -- keep names in sync with Ids
+  -- 2021.02.26  @akbooer
+  -----------------------------------
+
 
   luup.chdev.sync(g_deviceId, rootPtr)
 end
