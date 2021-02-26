@@ -38,8 +38,5 @@
 				<SCPDURL>S_SmartSwitchController1.xml</SCPDURL>
 			</service>
 		</serviceList>
-		<implementationList>
-			<implementationFile>I_SmartSwitch1.xml</implementationFile>
-		</implementationList>
 	</device>
 </root>

@@ -15,6 +15,7 @@
 -- You should have received a copy of the GNU General Public License
 -- along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+g_pluginName = "SmartSwitch"
 
 -- IMPORT GLOBALS
 local luup = luup
@@ -23,12 +24,12 @@ local require = require
 local math = math
 local log = require("L_" .. g_pluginName .. "_" .. "log")
 local util = require("L_" .. g_pluginName .. "_" .. "util")
-local json = require("L_" .. g_pluginName .. "_" .. "dkjson")
+local json = require("dkjson")
 
 -- CONSTANTS
 
 -- Plug-in version
-local PLUGIN_VERSION = "1.2"
+local PLUGIN_VERSION = "2.0"
 local LOG_PREFIX = "SmartSwitch"
 local DATE_FORMAT = "%m/%d/%y %H:%M:%S"
 
@@ -110,6 +111,66 @@ g_taskHandle = -1
 -- FUNCTIONS
 ----------------------------------------------------
 
+local getFormattedLevel = function (level)
+	if (level == 0) then
+		return "Off"
+	elseif (level == 100) then
+		return "On"
+	end
+	return tostring(level) .. "%"
+end
+
+local getFormattedTimeout = function (timeout)
+	local hours = math.floor(timeout / 3600)
+	local hoursRemainder = timeout % 3600
+	if (hours > 0) then
+		return tostring(hours) .. "h"
+	end
+	local minutes = math.floor(hoursRemainder / 60)
+	local minutesRemainder = hoursRemainder % 60
+	if (minutes > 0) then
+		return tostring(minutes) .. "m"
+	end
+	local secondes = math.floor(minutesRemainder / 60)
+	return tostring(secondes) .. "s"
+end
+
+-- Shows Smartswitch Controller status on UI
+local function showStatusOnUI (smartSwitchId)
+	local statusText = '<div style="color:gray;font-size:.7em;text-align:left;">'
+
+	-- Levels
+	local onLevel       = util.getLuupVariable(SID.SMART_SWITCH_CONTROLLER, "OnLevel", smartSwitchId, util.T_NUMBER)
+	local offLevel      = util.getLuupVariable(SID.SMART_SWITCH_CONTROLLER, "OffLevel", smartSwitchId, util.T_NUMBER)
+	statusText = statusText .. "<div>Levels: On/<b>" .. getFormattedLevel(onLevel) .. "</b> Off/<b>" .. getFormattedLevel(offLevel) .. "</b></div>"
+
+	-- Timeouts
+	local autoTimeout   = util.getLuupVariable(SID.SMART_SWITCH_CONTROLLER, "AutoTimeout", smartSwitchId, util.T_NUMBER)
+	local manualTimeout = util.getLuupVariable(SID.SMART_SWITCH_CONTROLLER, "ManualTimeout", smartSwitchId, util.T_NUMBER)
+	statusText = statusText .. "<div>Timeouts: Auto/<b>" .. getFormattedTimeout(autoTimeout) .. "</b> Manual/<b>" .. getFormattedTimeout(manualTimeout) .. "</b></div>"
+
+	-- Current status
+	statusText = statusText .. "<div>Mode: "
+	local currentMode    = util.getLuupVariable(SID.SMART_SWITCH_CONTROLLER, "Mode", smartSwitchId, util.T_STRING)
+	local currentLevel   = util.getLuupVariable(SID.SMART_SWITCH_CONTROLLER, "Level", smartSwitchId, util.T_NUMBER)
+	local currentTimeout = util.getLuupVariable(SID.SMART_SWITCH_CONTROLLER, "Timeout", smartSwitchId, util.T_NUMBER)
+	if (currentMode == MODE.MANUAL) then
+		statusText = statusText .. "<b><font color=\"red\">" .. currentMode .. "</font></b>"
+	else
+		statusText = statusText .. "<b>" .. currentMode .. "</b>"
+	end
+	if (currentMode ~= MODE.OFF) then
+		statusText = statusText .. " at <b>" .. tostring(currentLevel) .. "%</b>"
+		if (currentTimeout ~= FAR_FUTURE_TIME) then
+			statusText = statusText .. " until <b>" .. os.date('%H:%M:%S', currentTimeout) .. "</b>"
+		end
+	end
+	statusText = statusText .. "</div>"
+
+	statusText = statusText .. "</div>"
+	util.setLuupVariable(SID.SMART_SWITCH_CONTROLLER, "StatusText", statusText, smartSwitchId)
+end
+
 -- Set light level on target switch
 local function setSwitchLevel(switchId, level)
   log.infoValues ("Setting Switch Level", "switchId", switchId, "level", level)
@@ -154,6 +215,8 @@ local function turnOffSwitch(smartSwitchId)
   setSwitchLevel(switchId, util.getLuupVariable(SID.SMART_SWITCH_CONTROLLER, "OffLevel", smartSwitchId, util.T_NUMBER))
   util.setLuupVariable(SID.SMART_SWITCH_CONTROLLER, "Mode", MODE.OFF, smartSwitchId)
   util.setLuupVariable(SID.SMART_SWITCH_CONTROLLER, "Timeout", FAR_FUTURE_TIME, smartSwitchId)
+  
+  showStatusOnUI(smartSwitchId)
 end
 
 
@@ -169,6 +232,8 @@ local function updateSwitchLevel(smartSwitchId)
   elseif (currentMode == MODE.OFF) then
     setSwitchLevel(switchId, util.getLuupVariable(SID.SMART_SWITCH_CONTROLLER, "OffLevel", smartSwitchId, util.T_NUMBER))
   end
+  
+  showStatusOnUI(smartSwitchId)
 end
 
 ----------------------------------------------
@@ -344,6 +409,8 @@ local function updateSwitchTimeout(switchId)
       scheduleNextWakeup (newTimeout)
     end
   end
+  
+  showStatusOnUI(smartSwitchId)
 end
 
 -- This is the luup.call_delay callback function that is scheduled
@@ -535,6 +602,7 @@ local function sensorTripped(sensorId)
     util.setLuupVariable(
       SID.SMART_SWITCH_CONTROLLER, "Timeout", FAR_FUTURE_TIME, smartSwitchId)
 
+    showStatusOnUI(smartSwitchId)
   end
 end
 
@@ -679,7 +747,9 @@ local function initSmartSwitch(smartSwitchId)
   g_smartSwitches[smartSwitchId] = { ["switchId"] = switchId }
 
   -- Clear out old "StatusText" variable
-  util.setLuupVariable(SID.SMART_SWITCH_CONTROLLER, "StatusText", "", smartSwitchId)
+  --util.setLuupVariable(SID.SMART_SWITCH_CONTROLLER, "StatusText", "", smartSwitchId)
+  
+  showStatusOnUI(smartSwitchId)
 end
 
 local function initSmartSwitches()
@@ -722,8 +792,8 @@ local function syncChildDevices()
       local description = "SS: " .. luup.devices[switchId].description
 
       luup.chdev.append(g_deviceId, rootPtr,
-        switchId, description,
-        DID_SMART_SWITCH_CONTROLLER,
+        tostring(switchId), description,
+        nil,
         "D_SmartSwitchController1.xml", "", getDefaultParameters(), false)
 
     end
@@ -735,6 +805,41 @@ local function syncChildDevices()
   end
 
   luup.chdev.sync(g_deviceId, rootPtr)
+end
+
+-- Register with ALTUI once it is ready
+local function _registerWithALTUI()
+	for deviceId, device in pairs( luup.devices ) do
+		if ( device.device_type == "urn:schemas-upnp-org:device:altui:1" ) then
+			if luup.is_ready( deviceId ) then
+				log.info( "Register with ALTUI main device #" .. tostring( deviceId ), g_deviceId )
+				luup.call_action(
+					"urn:upnp-org:serviceId:altui1",
+					"RegisterPlugin",
+					{
+						newDeviceType = "urn:schemas-hugheaves-com:device:SmartSwitch:1",
+						newScriptFile = "J_SmartSwitch1.js",
+						newDeviceDrawFunc = "SmartSwitch.drawDevice"
+					},
+					deviceId
+				)
+				luup.call_action(
+					"urn:upnp-org:serviceId:altui1",
+					"RegisterPlugin",
+					{
+						newDeviceType = "urn:schemas-hugheaves-com:device:SmartSwitchController:1",
+						newScriptFile = "J_SmartSwitchController1.js",
+						newDeviceDrawFunc = "SmartSwitchController.drawDevice"
+					},
+					deviceId
+				)
+			else
+				log.info( "ALTUI main device #" .. tostring( deviceId ) .. " is not yet ready, retry to register in 10 seconds...", g_deviceId )
+				luup.call_delay( "ZiGateGateway.registerWithALTUI", 10 )
+			end
+			break
+		end
+	end
 end
 
 local function initialize(lul_device)
@@ -751,7 +856,7 @@ local function initialize(lul_device)
 
   -- set plugin version number
   luup.variable_set(SID.SMART_SWITCH, "PluginVersion", PLUGIN_VERSION, g_deviceId)
-
+  
   initLuupVariables()
 
   syncChildDevices()
@@ -763,10 +868,18 @@ local function initialize(lul_device)
   luup.variable_watch("switchCallback", SID.DIMMER, "LoadLevelStatus", nil)
   luup.variable_watch("sensorCallback", SID.SECURITY_SENSOR, "Tripped", nil)
 
+  -- Register with ALTUI
+	luup.call_delay( "SmartSwitch.registerWithALTUI", 10 )
+
+  luup.set_failure(0, lul_device)
+
   log.info("Done with initialization")
 
   return success, errorMsg, "SmartSwitch"
 end
+
+-- Promote the functions used by Vera's luup.xxx functions to the global name space
+_G["SmartSwitch.registerWithALTUI"] = _registerWithALTUI
 
 
 -- RETURN GLOBAL FUNCTIONS
@@ -778,4 +891,4 @@ return {
   switchCallback=switchCallback,
   setLogConfig=setLogConfig
 }
-		
+

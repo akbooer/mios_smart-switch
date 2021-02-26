@@ -25,6 +25,7 @@
 	<device>
 		<deviceType>urn:schemas-hugheaves-com:device:SmartSwitch:1</deviceType>
 		<handleChildren>1</handleChildren>
+		<protocol>raw</protocol>
 		<friendlyName>Smart Switch Plugin</friendlyName>
 		<manufacturer>Hugh Eaves</manufacturer>
 		<manufacturerURL>http://www.hugheaves.com</manufacturerURL>
