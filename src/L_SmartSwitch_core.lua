@@ -17,7 +17,8 @@
 
   -- 2021.02.26  @akbooer (for @DesT)
   -- optionally use device NAMES to override IDS
-
+  -- 2021.02.27  add SensorNames functionality
+  
 
 g_pluginName = "SmartSwitch"
 
@@ -33,7 +34,7 @@ local json = require("dkjson")
 -- CONSTANTS
 
 -- Plug-in version
-local PLUGIN_VERSION = "2.0.1"      -- 2021.02.26  @akbooer
+local PLUGIN_VERSION = "2.0.2"      -- 2021.02.27  @akbooer
 local LOG_PREFIX = "SmartSwitch"
 local DATE_FORMAT = "%m/%d/%y %H:%M:%S"
 
@@ -721,6 +722,52 @@ local function getDefaultParameters()
     SID.SMART_SWITCH_CONTROLLER..",RememberManualLevel=0"
 end
 
+-----------------------------------
+-- 2021.02.27  @akbooer
+
+-- write (possibly new) list of ids
+local function updateIdsFromNames (NameVar, devNo, svcId, idVar)
+  local use_names = util.getLuupVariable(SID.SMART_SWITCH, "UseSwitchNames", g_deviceId, util.T_BOOLEAN)
+  if use_names then
+    local name2id = {}
+    for n, d in pairs(luup.devices) do    -- make a map of all the device names/ids
+      name2id[d.description] = tostring(n)
+    end
+    local newIds = {}
+    local Names = util.getLuupVariable(svcId, NameVar, devNo, util.T_TABLE)
+    for _, name in ipairs(Names or {}) do   -- make new list of ids from names
+      newIds[#newIds+1] = name2id[name]
+    end
+    util.setLuupVariable(svcId, idVar, newIds, devNo)
+  end
+end
+
+-- write (possibly new) list of names
+local function updateNamesFromIds (NameVar, devNo, svcId, idVar)
+  local newNames = {}
+  local switchIds = util.getLuupVariable(svcId, idVar, devNo, util.T_TABLE)
+  for i, idstr in ipairs (switchIds) do
+    newNames[i] = (luup.devices[tonumber(idstr)] or {}) .description or '?'
+  end
+  util.setLuupVariable(svcId, NameVar, newNames, devNo)
+end
+
+-- callbacks to keep Switch and Sensor names in sync
+-- variables: lul_device, lul_service, lul_variable, lul_value_old, lul_value_new 
+
+-- write (possibly new) list of SensorNames
+function updateNamesFromSensorIds (...)
+  updateNamesFromIds ("SensorNames", ...)
+end
+
+-- write (possibly new) list of SwitchNames
+function updateNamesFromSwitchIds (...)
+  updateNamesFromIds ("SwitchNames", ...)
+end
+
+-- 2021.02.27  @akbooer
+-----------------------------------
+
 local function initSwitchState(switchId, smartSwitchId)
   log.debugValues ("Initializing switch state", "switchId", switchId, "smartSwitchId", smartSwitchId)
   g_switches[switchId] = {
@@ -734,6 +781,8 @@ local function initSmartSwitch(smartSwitchId)
   log.debugValues ("Initializing smart switch", "switchId", switchId, "smartSwitchId", smartSwitchId)
 
   initSwitchState(switchId, smartSwitchId)
+
+  updateIdsFromNames ("SensorNames", smartSwitchId, SID.SMART_SWITCH_CONTROLLER, "SensorIds")  -- 2021.02.27  @akbooer
 
   local sensorIds = util.getLuupVariable(SID.SMART_SWITCH_CONTROLLER, "SensorIds", smartSwitchId, util.T_TABLE)
   local validSensorIds = {}
@@ -752,6 +801,8 @@ local function initSmartSwitch(smartSwitchId)
 
   g_smartSwitches[smartSwitchId] = { ["switchId"] = switchId }
 
+  updateNamesFromSensorIds (smartSwitchId, SID.SMART_SWITCH_CONTROLLER, "SensorIds")  -- 2021.02.27  @akbooer
+  
   -- Clear out old "StatusText" variable
   --util.setLuupVariable(SID.SMART_SWITCH_CONTROLLER, "StatusText", "", smartSwitchId)
   
@@ -782,24 +833,7 @@ end
 -- Synchronize the Smart Switch Controller devices
 local function syncChildDevices()
   
-  -----------------------------------
-  -- 2021.02.26  @akbooer
-  -- optionally use device NAMES to override IDS
-  local use_names = util.getLuupVariable(SID.SMART_SWITCH, "UseSwitchNames", g_deviceId, util.T_BOOLEAN)
-  if use_names then
-    local name2id = {}
-    for n, d in pairs(luup.devices) do    -- make a map of all the device names/ids
-      name2id[d.description] = tostring(n)
-    end
-    local newIds = {}
-    local switchNames = util.getLuupVariable(SID.SMART_SWITCH, "SwitchNames", g_deviceId, util.T_TABLE)
-    for _, name in ipairs(switchNames) do   -- make new list of ids from names
-      newIds[#newIds+1] = name2id[name]
-    end
-    util.setLuupVariable(SID.SMART_SWITCH, "SwitchIds", newIds, g_deviceId)
-  end
-  -- 2021.02.26  @akbooer
-  -----------------------------------
+  updateIdsFromNames ("SwitchNames", g_deviceId, SID.SMART_SWITCH, "SwitchIds")  -- 2021.02.26  @akbooer
   
   local switchIds = util.getLuupVariable(SID.SMART_SWITCH, "SwitchIds", g_deviceId, util.T_TABLE)
   log.debugValues ("", "switchIds", switchIds)
@@ -830,23 +864,7 @@ local function syncChildDevices()
     util.setLuupVariable(SID.SMART_SWITCH, "SwitchIds", validSwitchIds, g_deviceId)
   end
   
-  -----------------------------------
-  -- 2021.02.26  @akbooer
-  -- write (possibly new) list of names
-  function updateNamesFromSwitchIds ()
-    local newNames = {}
-    local switchIds = util.getLuupVariable(SID.SMART_SWITCH, "SwitchIds", g_deviceId, util.T_TABLE)
-    for i, idstr in ipairs (switchIds) do
-      newNames[i] = (luup.devices[tonumber(idstr)] or {}) .description or '?'
-    end
-    util.setLuupVariable(SID.SMART_SWITCH, "SwitchNames", newNames, g_deviceId)
-  end
-  
-  updateNamesFromSwitchIds ()
-  luup.variable_watch ("updateNamesFromSwitchIds", SID.SMART_SWITCH, "SwitchIds", g_deviceId)  -- keep names in sync with Ids
-  -- 2021.02.26  @akbooer
-  -----------------------------------
-
+  updateNamesFromSwitchIds (g_deviceId, SID.SMART_SWITCH, "SwitchIds")  -- 2021.02.26  @akbooer
 
   luup.chdev.sync(g_deviceId, rootPtr)
 end
@@ -911,6 +929,9 @@ local function initialize(lul_device)
   luup.variable_watch("switchCallback", SID.DIMMER, "Status", nil)
   luup.variable_watch("switchCallback", SID.DIMMER, "LoadLevelStatus", nil)
   luup.variable_watch("sensorCallback", SID.SECURITY_SENSOR, "Tripped", nil)
+
+  luup.variable_watch("updateNamesFromSwitchIds", SID.SMART_SWITCH, "SwitchIds", g_deviceId)      -- 2021.02.26  @akbooer
+  luup.variable_watch("updateNamesFromSensorIds", SID.SMART_SWITCH_CONTROLLER, "SensorIds", nil)  -- 2021.02.27  @akbooer
 
   -- Register with ALTUI
 	luup.call_delay( "SmartSwitch.registerWithALTUI", 10 )
